@@ -1,21 +1,24 @@
-import express from 'express';
-import { Server } from 'socket.io';
+import express, { Response } from 'express';
+import { Request } from 'express-serve-static-core';
+import { Server, Socket } from 'socket.io';
 import http from 'http';
-import { nanoid } from 'nanoid';
+import { nanoid } from 'nanoid/non-secure';
 import cors from 'cors';
 
 const app = express();
 const server = http.createServer(app);
+const FRONTEND_URL = process.env.FRONTEND_URL || "http://localhost:5173";
+
 const io = new Server(server, {
   cors: {
-    origin: "http://localhost:5173", // Your frontend URL
+    origin: FRONTEND_URL,
     methods: ["GET", "POST"]
   }
 });
 
 // Enable CORS for all routes
 app.use(cors({
-  origin: "http://localhost:5173" // Your frontend URL
+  origin: FRONTEND_URL
 }));
 
 app.use(express.json());
@@ -35,7 +38,8 @@ const SAMPLE_IMAGES = [
   'https://images.unsplash.com/photo-1682686581498-5e85c7228119',
 ].map(url => `${url}?auto=format&fit=crop&w=400&h=300&q=80`);
 
-interface Player {
+// Add export to make the interface available to other files
+export interface Player {
   id: string;
   nickname: string;
   team: Team;
@@ -48,7 +52,11 @@ type Team = 'green' | 'purple';
 type PlayerRole = 'codebreaker' | 'tagger';
 
 // REST endpoints
-app.post('/api/rooms', (_req, res) => {
+interface RoomResponse {
+  roomId: string;
+}
+
+app.post('/api/rooms', (req: Request, res: Response) => {
   const roomId = nanoid(6);
   rooms.set(roomId, {
     id: roomId,
@@ -68,10 +76,10 @@ app.post('/api/rooms', (_req, res) => {
     timeRemaining: 60,
     winner: null,
   });
-  res.json({ roomId });
+  res.json({ roomId: roomId });
 });
 
-app.get('/api/rooms/:roomId', (req, res) => {
+app.get('/api/rooms/:roomId', (req: Request<{roomId: string}>, res: Response) => {
   const room = rooms.get(req.params.roomId);
   if (!room) {
     res.status(404).json({ error: 'Room not found' });
@@ -81,14 +89,28 @@ app.get('/api/rooms/:roomId', (req, res) => {
 });
 
 // Socket.IO events
-io.on('connection', (socket) => {
+io.on('connection', (socket: Socket) => {
+  let currentPlayer: Player | null = null;
+
   socket.on('join-room', ({ roomId, player }) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
+    currentPlayer = player;
     socket.join(roomId);
     room.players.push(player);
     io.to(roomId).emit('room-updated', room);
+  });
+
+  // Add disconnect handler
+  socket.on('disconnect', () => {
+    if (currentPlayer) {
+      const room = rooms.get(currentPlayer.roomId);
+      if (room) {
+        room.players = room.players.filter((p: Player) => p.id !== currentPlayer?.id);
+        io.to(currentPlayer.roomId).emit('room-updated', room);
+      }
+    }
   });
 
   socket.on('switch-team', ({ roomId, playerId, newTeam }) => {
@@ -101,9 +123,11 @@ io.on('connection', (socket) => {
     io.to(roomId).emit('room-updated', room);
   });
 
-  // Add other game events...
+
 });
 
-server.listen(3001, () => {
-  console.log('Server running on port 3001');
+const PORT = process.env.PORT || 3001;
+
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
 }); 
