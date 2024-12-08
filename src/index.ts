@@ -1,11 +1,21 @@
+import { 
+  ExpressRequest, 
+  ExpressResponse, 
+  SocketType, 
+  GameImage, 
+  Player, 
+  Team,
+  Query,
+  SwitchTeamData
+} from './types';
 import express from 'express';
 import { Server } from 'socket.io';
 import http from 'http';
 import { nanoid } from 'nanoid';
 import cors from 'cors';
 import axios from 'axios';
-import { descriptionStore } from './imageDescriptions';
-import { ACTIVE_IMAGE_SET } from './imageSets';
+import { descriptionStore } from './imageDescriptions.js';
+import { ACTIVE_IMAGE_SET } from './imageSets.js';
 
 const app = express();
 const server = http.createServer(app);
@@ -365,7 +375,17 @@ io.on('connection', (socket: SocketType) => {
   });
 
   // Tagging Phase
-  socket.on('submit-tag', async ({ roomId, playerId, imageId, tag }) => {
+  socket.on('submit-tag', async ({ 
+    roomId, 
+    playerId, 
+    imageId, 
+    tag 
+  }: {
+    roomId: string;
+    playerId: string;
+    imageId: string;
+    tag: string;
+  }) => {
     const room = rooms.get(roomId);
     if (!room || room.phase !== 'playing') return;
     
