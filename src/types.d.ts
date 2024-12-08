@@ -24,6 +24,12 @@ export interface GameImage {
   formattedSimilarity?: string;
 }
 
+export interface GameStats {
+  correctGuesses: number;
+  incorrectGuesses: number;
+  totalSimilarity: number;
+}
+
 export interface Player {
   id: string;
   nickname: string;
@@ -42,6 +48,10 @@ export interface GameState {
   currentTurn: Team;
   timeRemaining: number;
   winner: Team | null;
+  gameStats: {
+    green: GameStats;
+    purple: GameStats;
+  };
 }
 
 export interface SwitchTeamData {
@@ -52,6 +62,15 @@ export interface SwitchTeamData {
 
 export interface SimilarityApiResponse {
   similarity: number;
+  model: 'use' | 'sbert';
+}
+
+export interface CustomRequest extends Request {
+  query: {
+    word?: string;
+    description?: string;
+    model?: 'use' | 'sbert';
+  };
 }
 
 export type ExpressRequest = Request;
