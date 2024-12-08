@@ -491,7 +491,7 @@ io.on('connection', (socket: SocketType) => {
       image.matched = true;
       image.matchedWord = word;
       image.similarity = match.similarity;
-      image.matchedTag = match.matchedTag;
+      image.matchedTag = match.matchedTag || undefined;
 
       io.to(roomId).emit('room-updated', room);
 
