@@ -24,7 +24,10 @@ const FRONTEND_URLS = [
   process.env.FRONTEND_URL || "http://localhost:5173",
   "https://202-frontend.vercel.app"
 ];
-const SIMILARITY_SERVICE_URL = process.env.SIMILARITY_SERVICE_URL || "http://127.0.0.1:5000";
+const SIMILARITY_SERVICE_URL = process.env.SIMILARITY_SERVICE_URL || 
+  (process.env.NODE_ENV === 'production' 
+    ? 'https://two02-similarity-service.onrender.com'
+    : 'http://localhost:5000');
 
 const io = new Server(server, {
   cors: {
@@ -54,10 +57,48 @@ const rooms = new Map<string, GameState>();
 
 async function warmupSimilarityService() {
   try {
+    console.log('Warming up similarity service at:', SIMILARITY_SERVICE_URL);
     const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`);
-    console.log('Similarity service health check:', response.data);
+    console.log('Similarity service health check response:', response.data);
   } catch (error) {
-    console.error('Error warming up similarity service:', error);
+    if (axios.isAxiosError(error)) {
+      console.error('Similarity service error:', {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data
+      });
+    } else {
+      console.error('Unknown error connecting to similarity service:', error);
+    }
+  }
+}
+
+async function getSimilarity(word: string, description: string, model: string = 'sbert') {
+  try {
+    console.log(`Calculating similarity between "${word}" and "${description}" using ${model}`);
+    const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
+      word: word.toLowerCase(),
+      description: description.toLowerCase(),
+      model
+    });
+    console.log('Similarity response:', response.data);
+    return response.data;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error('Similarity calculation error:', {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data
+      });
+      // Provide a fallback similarity calculation
+      if (word.toLowerCase() === description.toLowerCase()) return { similarity: 1.0, model };
+      if (word.toLowerCase().includes(description.toLowerCase()) || 
+          description.toLowerCase().includes(word.toLowerCase())) {
+        return { similarity: 0.8, model };
+      }
+      return { similarity: 0.0, model };
+    }
+    throw error;
   }
 }
 
@@ -69,7 +110,8 @@ app.get('/health', (_req: Request, res: Response) => {
 app.post('/api/rooms', async (_req: Request, res: Response) => {
   console.log('Attempting to create room');
   try {
-    await warmupSimilarityService();
+    // Try to warm up similarity service but don't wait for it
+    warmupSimilarityService().catch(console.error);
     
     const roomId = nanoid(6);
     console.log('Generated room ID:', roomId);
@@ -473,17 +515,9 @@ io.on('connection', (socket: SocketType) => {
 
           for (const desc of allDescriptions) {
             try {
-              const response = await axios.post<SimilarityApiResponse>(
-                `${SIMILARITY_SERVICE_URL}/compare`,
-                {
-                  word: word.toLowerCase(),
-                  description: desc.toLowerCase(),
-                  model: 'sbert'
-                }
-              );
-              
-              if (response.data.similarity > maxSimilarity) {
-                maxSimilarity = response.data.similarity;
+              const result = await getSimilarity(word, desc);
+              if (result.similarity > maxSimilarity) {
+                maxSimilarity = result.similarity;
                 bestDescription = desc;
                 bestTag = img.tags.find(t => t.text === desc);
               }
