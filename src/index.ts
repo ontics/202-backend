@@ -29,14 +29,25 @@ const SIMILARITY_SERVICE_URL = process.env.SIMILARITY_SERVICE_URL || "http://127
 const io = new Server(server, {
   cors: {
     origin: FRONTEND_URLS,
-    methods: ["GET", "POST"]
+    methods: ["GET", "POST"],
+    credentials: true
   }
 });
 
 // Enable CORS for all routes
 app.use(cors({
-  origin: FRONTEND_URLS
+  origin: FRONTEND_URLS,
+  credentials: true
 }));
+
+// Add request logging middleware
+app.use((req: Request, res: Response, next) => {
+  console.log(`${req.method} ${req.path}`, {
+    origin: req.headers.origin,
+    host: req.headers.host
+  });
+  next();
+});
 
 // In-memory store (replace with a database in production)
 const rooms = new Map<string, GameState>();
@@ -56,33 +67,42 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // Create room endpoint
 app.post('/api/rooms', async (_req: Request, res: Response) => {
-  await warmupSimilarityService();
-  
-  const roomId = nanoid(6);
-  const room: GameState = {
-    id: roomId,
-    roomId,
-    players: [],
-    phase: 'lobby',
-    images: ACTIVE_IMAGE_SET.map((url: string) => ({
-      id: nanoid(),
-      url,
-      team: Math.random() < 0.5 ? 'green' : 'purple',
-      tags: [],
-      selected: false,
-      matched: false
-    })),
-    currentTurn: 'green',
-    timeRemaining: 120,
-    winner: null,
-    gameStats: {
-      green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
-      purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
-    }
-  };
-  
-  rooms.set(roomId, room);
-  res.json({ roomId });
+  console.log('Attempting to create room');
+  try {
+    await warmupSimilarityService();
+    
+    const roomId = nanoid(6);
+    console.log('Generated room ID:', roomId);
+    
+    const room: GameState = {
+      id: roomId,
+      roomId,
+      players: [],
+      phase: 'lobby',
+      images: ACTIVE_IMAGE_SET.map((url: string) => ({
+        id: nanoid(),
+        url,
+        team: Math.random() < 0.5 ? 'green' : 'purple',
+        tags: [],
+        selected: false,
+        matched: false
+      })),
+      currentTurn: 'green',
+      timeRemaining: 120,
+      winner: null,
+      gameStats: {
+        green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
+        purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
+      }
+    };
+    
+    rooms.set(roomId, room);
+    console.log('Room created successfully:', roomId);
+    res.json({ roomId });
+  } catch (error) {
+    console.error('Error creating room:', error);
+    res.status(500).json({ error: 'Failed to create room' });
+  }
 });
 
 // Get room endpoint
@@ -555,7 +575,7 @@ io.on('connection', (socket: SocketType) => {
   });
 });
 
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
