@@ -57,38 +57,51 @@ const rooms = new Map<string, GameState>();
 
 async function warmupSimilarityService() {
   try {
-    console.log('Warming up similarity service at:', SIMILARITY_SERVICE_URL);
+    console.log(`[${new Date().toISOString()}] Warming up similarity service at: ${SIMILARITY_SERVICE_URL}`);
     const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`);
-    console.log('Similarity service health check response:', response.data);
+    console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
+    
+    // Test the similarity service with a simple comparison
+    const testResponse = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
+      word: "test",
+      description: "test",
+      model: "sbert"
+    });
+    console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
+    
+    return true;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error('Similarity service error:', {
+      console.error(`[${new Date().toISOString()}] Similarity service error:`, {
         message: error.message,
         code: error.code,
-        response: error.response?.data
+        response: error.response?.data,
+        url: error.config?.url
       });
     } else {
-      console.error('Unknown error connecting to similarity service:', error);
+      console.error(`[${new Date().toISOString()}] Unknown error connecting to similarity service:`, error);
     }
+    return false;
   }
 }
 
 async function getSimilarity(word: string, description: string, model: string = 'sbert') {
   try {
-    console.log(`Calculating similarity between "${word}" and "${description}" using ${model}`);
+    console.log(`[${new Date().toISOString()}] Calculating similarity between "${word}" and "${description}" using ${model}`);
     const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
       word: word.toLowerCase(),
       description: description.toLowerCase(),
       model
     });
-    console.log('Similarity response:', response.data);
+    console.log(`[${new Date().toISOString()}] Similarity response:`, response.data);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error('Similarity calculation error:', {
+      console.error(`[${new Date().toISOString()}] Similarity calculation error:`, {
         message: error.message,
         code: error.code,
-        response: error.response?.data
+        response: error.response?.data,
+        url: error.config?.url
       });
       // Provide a fallback similarity calculation
       if (word.toLowerCase() === description.toLowerCase()) return { similarity: 1.0, model };
@@ -108,13 +121,14 @@ app.get('/health', (_req: Request, res: Response) => {
 
 // Create room endpoint
 app.post('/api/rooms', async (_req: Request, res: Response) => {
-  console.log('Attempting to create room');
+  console.log(`[${new Date().toISOString()}] Attempting to create room`);
   try {
-    // Try to warm up similarity service but don't wait for it
-    warmupSimilarityService().catch(console.error);
+    // Try to warm up similarity service and wait for the result
+    const isServiceReady = await warmupSimilarityService();
+    console.log(`[${new Date().toISOString()}] Similarity service ready status:`, isServiceReady);
     
     const roomId = nanoid(6);
-    console.log('Generated room ID:', roomId);
+    console.log(`[${new Date().toISOString()}] Generated room ID:`, roomId);
     
     const room: GameState = {
       id: roomId,
@@ -139,10 +153,10 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
     };
     
     rooms.set(roomId, room);
-    console.log('Room created successfully:', roomId);
-    res.json({ roomId });
+    console.log(`[${new Date().toISOString()}] Room created successfully:`, roomId);
+    res.json({ roomId, similarityServiceReady: isServiceReady });
   } catch (error) {
-    console.error('Error creating room:', error);
+    console.error(`[${new Date().toISOString()}] Error creating room:`, error);
     res.status(500).json({ error: 'Failed to create room' });
   }
 });
