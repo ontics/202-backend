@@ -404,7 +404,7 @@ io.on('connection', (socket: SocketType) => {
       });
 
       // Final safety check: ensure all images have teams assigned
-      const unassignedImages = gameImages.filter(img => img.team === 'unassigned');
+      const unassignedImages = gameImages.filter(img => !['red', 'green', 'purple'].includes(img.team as string));
       if (unassignedImages.length > 0) {
         console.error(`[${new Date().toISOString()}] Error: ${unassignedImages.length} images remain unassigned`);
         io.to(roomId).emit('game-error', 'Failed to assign teams to all images');
