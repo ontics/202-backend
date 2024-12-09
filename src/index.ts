@@ -247,10 +247,11 @@ const testGameplay: RequestHandler = async (req: CustomRequest, res: Response) =
 app.get('/api/test-gameplay', testGameplay);
 
 // Clear descriptions endpoint
-app.post('/api/clear-descriptions', (_req: Request, res: Response) => {
+app.post('/api/clear-descriptions/:roomId', (req: Request, res: Response) => {
   try {
-    descriptionStore.clearAllDescriptions();
-    res.status(200).json({ message: 'All descriptions cleared' });
+    const { roomId } = req.params;
+    descriptionStore.clearRoomDescriptions(roomId);
+    res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: 'Failed to clear descriptions' });
   }
@@ -422,7 +423,7 @@ io.on('connection', (socket: SocketType) => {
     images.forEach(image => {
       if (image.tags && image.tags.length > 0) {
         image.tags.forEach(tag => {
-          descriptionStore.addDescription(image.url, tag.text);
+          descriptionStore.addDescription(roomId, image.url, tag.text);
         });
       }
     });
@@ -587,7 +588,7 @@ io.on('connection', (socket: SocketType) => {
     // First pass: collect all comparisons and count descriptions per image
     for (const img of unmatchedImages) {
       const playerTags = img.tags.map(t => t.text);
-      const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
+      const storedDescriptions = descriptionStore.getDescriptions(roomId, img.url);
       const allDescriptions = [...playerTags, ...storedDescriptions];
       imageDescriptionCounts.set(img.id, allDescriptions.length);
 
@@ -608,7 +609,7 @@ io.on('connection', (socket: SocketType) => {
       let currentIndex = 0;
       const imageMatches = unmatchedImages.map(img => {
         const playerTags = img.tags.map(t => t.text);
-        const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
+        const storedDescriptions = descriptionStore.getDescriptions(roomId, img.url);
         const allDescriptions = [...playerTags, ...storedDescriptions];
         
         // Find the best similarity among this image's descriptions
