@@ -95,7 +95,7 @@ async function getSimilarityBatch(comparisons: { word: string, description: stri
   try {
     console.log(`[${new Date().toISOString()}] Calculating batch similarity for ${comparisons.length} pairs`);
     const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare-batch`, comparisons, {
-      timeout: 30000
+      timeout: 60000  // Increase timeout to 60 seconds
     });
     console.log(`[${new Date().toISOString()}] Batch similarity response:`, response.data);
     similarityServiceReady = true;
@@ -109,14 +109,8 @@ async function getSimilarityBatch(comparisons: { word: string, description: stri
         response: error.response?.data,
         url: error.config?.url
       });
-      // Provide fallback similarities
-      return comparisons.map(({ word, description }) => {
-        const w = word.toLowerCase();
-        const d = description.toLowerCase();
-        if (w === d) return { similarity: 1.0, model: 'sbert' };
-        if (w.includes(d) || d.includes(w)) return { similarity: 0.8, model: 'sbert' };
-        return { similarity: 0.0, model: 'sbert' };
-      });
+      // Instead of fallback, throw error to trigger retry
+      throw error;
     }
     throw error;
   }
