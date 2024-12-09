@@ -346,7 +346,8 @@ io.on('connection', (socket: SocketType) => {
     warmupSimilarityService().catch(console.error);
 
     // Get random selection of images from multiple sets
-    const gameImages = getGameImages().map((imageInfo: ImageInfo) => ({
+    const selectedImageInfos = getGameImages();
+    const gameImages = selectedImageInfos.map((imageInfo: ImageInfo) => ({
       id: nanoid(),
       url: imageInfo.url,
       team: 'unassigned' as Team | 'red',
@@ -373,11 +374,10 @@ io.on('connection', (socket: SocketType) => {
     }
     gameImages[indices[14]].team = 'red';
 
-    // Set default descriptions
-    gameImages.forEach((image: GameImage) => {
-      const imageInfo = getGameImages().find((info: ImageInfo) => info.url === image.url);
-      if (imageInfo?.defaultDescription) {
-        descriptionStore.setDefaultDescription(image.url, imageInfo.defaultDescription);
+    // Set default descriptions using the original selected images
+    selectedImageInfos.forEach((imageInfo: ImageInfo) => {
+      if (imageInfo.defaultDescription) {
+        descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
       }
     });
 
