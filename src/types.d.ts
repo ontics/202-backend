@@ -20,6 +20,7 @@ export interface GameImage {
   matched: boolean;
   matchedWord?: string;
   matchedTag?: Tag;
+  defaultDescription?: string;
   similarity?: number;
   formattedSimilarity?: string;
 }
