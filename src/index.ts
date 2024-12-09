@@ -697,6 +697,21 @@ io.on('connection', (socket: SocketType) => {
         room.gameStats![room.currentTurn].correctGuesses++;
         room.gameStats![room.currentTurn].totalSimilarity += match.similarity;
 
+        // Check if either team has won
+        const greenTeamImages = room.images.filter(img => img.team === 'green');
+        const purpleTeamImages = room.images.filter(img => img.team === 'purple');
+        const greenTeamCleared = greenTeamImages.every(img => img.matched);
+        const purpleTeamCleared = purpleTeamImages.every(img => img.matched);
+
+        if (greenTeamCleared || purpleTeamCleared) {
+          await new Promise(resolve => setTimeout(resolve, 3500));
+          room.phase = 'gameOver';
+          room.winner = greenTeamCleared ? 'green' : 'purple';
+          io.to(roomId).emit('room-updated', room);
+          io.to(roomId).emit('guess-end');
+          return;
+        }
+
         const unmatched = room.images.filter(img => !img.matched && img.team === room.currentTurn);
         if (unmatched.length === 0) {
           await new Promise(resolve => setTimeout(resolve, 3500));
