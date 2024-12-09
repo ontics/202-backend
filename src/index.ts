@@ -44,7 +44,7 @@ async function warmupSimilarityService() {
     
     // First check health with a shorter timeout
     const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { 
-      timeout: 5000 
+      timeout: 10000
     });
     console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
     
@@ -83,8 +83,8 @@ async function warmupSimilarityService() {
 // Initial warmup
 warmupSimilarityService();
 
-// Periodic warmup every 5 minutes
-setInterval(warmupSimilarityService, 5 * 60 * 1000);
+// Periodic warmup every 10 minutes
+setInterval(warmupSimilarityService, 10 * 60 * 1000);
 
 async function getSimilarityBatch(comparisons: { word: string, description: string }[]) {
   // If service isn't ready, try to warm it up first
