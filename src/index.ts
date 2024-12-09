@@ -588,11 +588,14 @@ io.on('connection', (socket: SocketType) => {
     // First pass: collect all comparisons and count descriptions per image
     for (const img of unmatchedImages) {
       const playerTags = img.tags.map(t => t.text);
-      const storedDescriptions = descriptionStore.getDescriptions(roomId, img.url);
-      const allDescriptions = [...playerTags, ...storedDescriptions];
-      imageDescriptionCounts.set(img.id, allDescriptions.length);
+      // Only get stored descriptions if there are no player tags
+      const descriptions = playerTags.length > 0 
+        ? playerTags 
+        : descriptionStore.getDescriptions(roomId, img.url);
+      
+      imageDescriptionCounts.set(img.id, descriptions.length);
 
-      for (const desc of allDescriptions) {
+      for (const desc of descriptions) {
         comparisons.push({
           word: word.toLowerCase(),
           description: desc.toLowerCase()
@@ -609,8 +612,10 @@ io.on('connection', (socket: SocketType) => {
       let currentIndex = 0;
       const imageMatches = unmatchedImages.map(img => {
         const playerTags = img.tags.map(t => t.text);
-        const storedDescriptions = descriptionStore.getDescriptions(roomId, img.url);
-        const allDescriptions = [...playerTags, ...storedDescriptions];
+        // Only get stored descriptions if there are no player tags
+        const descriptions = playerTags.length > 0 
+          ? playerTags 
+          : descriptionStore.getDescriptions(roomId, img.url);
         
         // Find the best similarity among this image's descriptions
         let maxSimilarity = 0;
@@ -618,7 +623,7 @@ io.on('connection', (socket: SocketType) => {
         let bestTag = null;
 
         // Look at similarities only for this image's descriptions
-        allDescriptions.forEach((desc, i) => {
+        descriptions.forEach((desc, i) => {
           const similarity = similarities[currentIndex + i].similarity;
           if (similarity > maxSimilarity) {
             maxSimilarity = similarity;
@@ -628,13 +633,14 @@ io.on('connection', (socket: SocketType) => {
         });
 
         // Move index forward by number of descriptions for this image
-        currentIndex += allDescriptions.length;
+        currentIndex += descriptions.length;
 
         return {
           image: img,
           similarity: maxSimilarity,
           matchedDescription: bestDescription,
-          matchedTag: bestTag
+          matchedTag: bestTag,
+          isDefaultDescription: !bestTag
         };
       });
 
@@ -658,7 +664,15 @@ io.on('connection', (socket: SocketType) => {
         image.matched = true;
         image.matchedWord = word;
         image.similarity = match.similarity;
-        image.matchedTag = match.matchedTag || undefined;
+        
+        // If it matched with a default description, store it
+        if (match.isDefaultDescription) {
+          image.defaultDescription = match.matchedDescription;
+          image.matchedTag = undefined;
+        } else {
+          image.matchedTag = match.matchedTag || undefined;
+          image.defaultDescription = undefined;
+        }
 
         io.to(roomId).emit('room-updated', room);
 
