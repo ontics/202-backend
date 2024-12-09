@@ -92,31 +92,30 @@ async function warmupSimilarityService() {
   }
 }
 
-async function getSimilarity(word: string, description: string, model: string = 'sbert') {
+async function getSimilarityBatch(comparisons: { word: string, description: string }[]) {
   try {
-    console.log(`[${new Date().toISOString()}] Calculating similarity between "${word}" and "${description}" using ${model}`);
-    const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
-      word: word.toLowerCase(),
-      description: description.toLowerCase(),
-      model
+    console.log(`[${new Date().toISOString()}] Calculating batch similarity for ${comparisons.length} pairs`);
+    const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare-batch`, comparisons, {
+      timeout: 30000
     });
-    console.log(`[${new Date().toISOString()}] Similarity response:`, response.data);
+    console.log(`[${new Date().toISOString()}] Batch similarity response:`, response.data);
     return response.data;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error(`[${new Date().toISOString()}] Similarity calculation error:`, {
+      console.error(`[${new Date().toISOString()}] Batch similarity calculation error:`, {
         message: error.message,
         code: error.code,
         response: error.response?.data,
         url: error.config?.url
       });
-      // Provide a fallback similarity calculation
-      if (word.toLowerCase() === description.toLowerCase()) return { similarity: 1.0, model };
-      if (word.toLowerCase().includes(description.toLowerCase()) || 
-          description.toLowerCase().includes(word.toLowerCase())) {
-        return { similarity: 0.8, model };
-      }
-      return { similarity: 0.0, model };
+      // Provide fallback similarities
+      return comparisons.map(({ word, description }) => {
+        const w = word.toLowerCase();
+        const d = description.toLowerCase();
+        if (w === d) return { similarity: 1.0, model: 'sbert' };
+        if (w.includes(d) || d.includes(w)) return { similarity: 0.8, model: 'sbert' };
+        return { similarity: 0.0, model: 'sbert' };
+      });
     }
     throw error;
   }
@@ -523,96 +522,111 @@ io.on('connection', (socket: SocketType) => {
     const currentPlayer = room.players.find(p => p.id === playerId);
     if (!currentPlayer || currentPlayer.team !== room.currentTurn) return;
 
-    const imageMatches = await Promise.all(
-      room.images
-        .filter(img => !img.matched)
-        .map(async img => {
-          const playerTags = img.tags.map(t => t.text);
-          const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
-          const allDescriptions = [...playerTags, ...storedDescriptions];
+    const unmatchedImages = room.images.filter(img => !img.matched);
+    const comparisons = [];
 
-          let maxSimilarity = 0;
-          let bestDescription = '';
-          let bestTag = null;
+    for (const img of unmatchedImages) {
+      const playerTags = img.tags.map(t => t.text);
+      const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
+      const allDescriptions = [...playerTags, ...storedDescriptions];
 
-          for (const desc of allDescriptions) {
-            try {
-              const result = await getSimilarity(word, desc);
-              if (result.similarity > maxSimilarity) {
-                maxSimilarity = result.similarity;
-                bestDescription = desc;
-                bestTag = img.tags.find(t => t.text === desc);
-              }
-            } catch (error) {
-              console.error('Error calculating similarity:', error);
-            }
+      for (const desc of allDescriptions) {
+        comparisons.push({
+          word: word.toLowerCase(),
+          description: desc.toLowerCase()
+        });
+      }
+    }
+
+    try {
+      io.to(roomId).emit('guess-start');
+
+      const similarities = await getSimilarityBatch(comparisons);
+      const imageMatches = unmatchedImages.map(img => {
+        const playerTags = img.tags.map(t => t.text);
+        const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
+        const allDescriptions = [...playerTags, ...storedDescriptions];
+
+        let maxSimilarity = 0;
+        let bestDescription = '';
+        let bestTag = null;
+
+        allDescriptions.forEach((desc, index) => {
+          const similarity = similarities[index].similarity;
+          if (similarity > maxSimilarity) {
+            maxSimilarity = similarity;
+            bestDescription = desc;
+            bestTag = img.tags.find(t => t.text === desc);
           }
+        });
 
-          return {
-            image: img,
-            similarity: maxSimilarity,
-            matchedDescription: bestDescription,
-            matchedTag: bestTag
-          };
-        })
-    );
+        return {
+          image: img,
+          similarity: maxSimilarity,
+          matchedDescription: bestDescription,
+          matchedTag: bestTag
+        };
+      });
 
-    const matches = imageMatches
-      .sort((a, b) => b.similarity - a.similarity)
-      .slice(0, count);
+      const matches = imageMatches
+        .sort((a, b) => b.similarity - a.similarity)
+        .slice(0, count);
 
-    io.to(roomId).emit('guess-start');
-    await new Promise(resolve => setTimeout(resolve, 3000));
+      await new Promise(resolve => setTimeout(resolve, 3000));
 
-    for (const match of matches) {
-      const image = match.image;
-      
-      image.matched = true;
-      image.matchedWord = word;
-      image.similarity = match.similarity;
-      image.matchedTag = match.matchedTag || undefined;
+      for (const match of matches) {
+        const image = match.image;
+        
+        image.matched = true;
+        image.matchedWord = word;
+        image.similarity = match.similarity;
+        image.matchedTag = match.matchedTag || undefined;
 
-      io.to(roomId).emit('room-updated', room);
-
-      if (image.team === 'red') {
-        await new Promise(resolve => setTimeout(resolve, 3500));
-        room.phase = 'gameOver';
-        room.winner = room.currentTurn === 'green' ? 'purple' : 'green';
         io.to(roomId).emit('room-updated', room);
-        io.to(roomId).emit('guess-end');
-        return;
+
+        if (image.team === 'red') {
+          await new Promise(resolve => setTimeout(resolve, 3500));
+          room.phase = 'gameOver';
+          room.winner = room.currentTurn === 'green' ? 'purple' : 'green';
+          io.to(roomId).emit('room-updated', room);
+          io.to(roomId).emit('guess-end');
+          return;
+        }
+
+        if (image.team !== room.currentTurn) {
+          room.gameStats![room.currentTurn].incorrectGuesses++;
+          await new Promise(resolve => setTimeout(resolve, 3500));
+          room.currentTurn = room.currentTurn === 'green' ? 'purple' : 'green';
+          io.to(roomId).emit('room-updated', room);
+          io.to(roomId).emit('guess-end');
+          return;
+        }
+
+        room.gameStats![room.currentTurn].correctGuesses++;
+        room.gameStats![room.currentTurn].totalSimilarity += match.similarity;
+
+        const unmatched = room.images.filter(img => !img.matched && img.team === room.currentTurn);
+        if (unmatched.length === 0) {
+          await new Promise(resolve => setTimeout(resolve, 3500));
+          room.phase = 'gameOver';
+          room.winner = room.currentTurn;
+          io.to(roomId).emit('room-updated', room);
+          io.to(roomId).emit('guess-end');
+          return;
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 3500));
       }
 
-      if (image.team !== room.currentTurn) {
-        room.gameStats![room.currentTurn].incorrectGuesses++;
-        await new Promise(resolve => setTimeout(resolve, 3500));
+      if (room.phase !== 'gameOver') {
         room.currentTurn = room.currentTurn === 'green' ? 'purple' : 'green';
         io.to(roomId).emit('room-updated', room);
-        io.to(roomId).emit('guess-end');
-        return;
       }
-
-      room.gameStats![room.currentTurn].correctGuesses++;
-      room.gameStats![room.currentTurn].totalSimilarity += match.similarity;
-
-      const unmatched = room.images.filter(img => !img.matched && img.team === room.currentTurn);
-      if (unmatched.length === 0) {
-        await new Promise(resolve => setTimeout(resolve, 3500));
-        room.phase = 'gameOver';
-        room.winner = room.currentTurn;
-        io.to(roomId).emit('room-updated', room);
-        io.to(roomId).emit('guess-end');
-        return;
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 3500));
+      io.to(roomId).emit('guess-end');
+    } catch (error) {
+      console.error('Error processing guess:', error);
+      io.to(roomId).emit('guess-end');
     }
-
-    if (room.phase !== 'gameOver') {
-      room.currentTurn = room.currentTurn === 'green' ? 'purple' : 'green';
-      io.to(roomId).emit('room-updated', room);
-    }
-    io.to(roomId).emit('guess-end');
   });
 
   socket.on('set-role', ({ roomId, playerId, role }: {
