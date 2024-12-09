@@ -167,9 +167,9 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
       roomId,
       players: [],
       phase: 'lobby',
-      images: ACTIVE_IMAGE_SET.map((url: string) => ({
+      images: ACTIVE_IMAGE_SET.map((imageInfo) => ({
         id: nanoid(),
-        url,
+        url: imageInfo.url,
         team: Math.random() < 0.5 ? 'green' : 'purple',
         tags: [],
         selected: false,
@@ -185,6 +185,11 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
         purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
       }
     };
+
+    // Set default descriptions for each image
+    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
+      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    });
     
     rooms.set(roomId, room);
     console.log(`[${new Date().toISOString()}] Room created successfully:`, roomId);
@@ -336,13 +341,15 @@ io.on('connection', (socket: SocketType) => {
     warmupSimilarityService().catch(console.error);
 
     // Create array of exactly 15 images
-    const images = ACTIVE_IMAGE_SET.slice(0, 15).map(url => ({
+    const images = ACTIVE_IMAGE_SET.slice(0, 15).map(imageInfo => ({
       id: nanoid(),
-      url,
+      url: imageInfo.url,
       team: 'unassigned' as Team | 'red',
       tags: [],
       selected: false,
-      matched: false
+      matched: false,
+      matchedWord: '',
+      similarity: 0
     }));
 
     // Create array of indices and shuffle
@@ -360,6 +367,11 @@ io.on('connection', (socket: SocketType) => {
       images[indices[i]].team = 'purple';
     }
     images[indices[14]].team = 'red';
+
+    // Set default descriptions
+    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
+      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    });
 
     room.images = images;
     room.phase = 'playing';
@@ -489,18 +501,34 @@ io.on('connection', (socket: SocketType) => {
     const room = rooms.get(roomId);
     if (!room) return;
     
+    // Clear descriptions for this room
+    descriptionStore.clearRoomDescriptions(roomId);
+    
+    // Reset game state but keep players with their teams and roles
     room.phase = 'lobby';
     room.timeRemaining = 120;
     room.currentTurn = 'green';
     room.winner = null;
-    room.images = ACTIVE_IMAGE_SET.map(url => ({
+    room.images = ACTIVE_IMAGE_SET.map(imageInfo => ({
       id: nanoid(),
-      url,
+      url: imageInfo.url,
       team: Math.random() < 0.5 ? 'green' : 'purple',
       tags: [],
       selected: false,
-      matched: false
+      matched: false,
+      matchedWord: '',
+      similarity: 0
     }));
+    room.gameStats = {
+      green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
+      purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
+    };
+
+    // Re-set default descriptions
+    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
+      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    });
+
     io.to(roomId).emit('room-updated', room);
   });
 
