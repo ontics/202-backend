@@ -656,7 +656,8 @@ io.on('connection', (socket: SocketType) => {
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, count);
 
-      await new Promise(resolve => setTimeout(resolve, 3000));
+      // Signal that we're about to start revealing matches
+      io.to(roomId).emit('match-reveal');
 
       for (const match of matches) {
         const image = match.image;
