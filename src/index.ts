@@ -17,6 +17,7 @@ import {
   CustomRequest,
   SimilarityApiResponse
 } from './types.js';
+import { getGameImages } from './imageSets';
 
 const app = express();
 const server = http.createServer(app);
@@ -341,8 +342,8 @@ io.on('connection', (socket: SocketType) => {
     // Start warming up the service but don't wait for it
     warmupSimilarityService().catch(console.error);
 
-    // Create array of exactly 15 images
-    const images = ACTIVE_IMAGE_SET.slice(0, 15).map(imageInfo => ({
+    // Get random selection of images from multiple sets
+    const gameImages = getGameImages().map(imageInfo => ({
       id: nanoid(),
       url: imageInfo.url,
       team: 'unassigned' as Team | 'red',
@@ -362,19 +363,22 @@ io.on('connection', (socket: SocketType) => {
 
     // Assign teams
     for (let i = 0; i < 7; i++) {
-      images[indices[i]].team = 'green';
+      gameImages[indices[i]].team = 'green';
     }
     for (let i = 7; i < 14; i++) {
-      images[indices[i]].team = 'purple';
+      gameImages[indices[i]].team = 'purple';
     }
-    images[indices[14]].team = 'red';
+    gameImages[indices[14]].team = 'red';
 
     // Set default descriptions
-    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
-      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    gameImages.forEach((image) => {
+      const imageInfo = getGameImages().find(info => info.url === image.url);
+      if (imageInfo?.defaultDescription) {
+        descriptionStore.setDefaultDescription(image.url, imageInfo.defaultDescription);
+      }
     });
 
-    room.images = images;
+    room.images = gameImages;
     room.phase = 'playing';
     room.timeRemaining = 120;
     room.currentTurn = 'green';
