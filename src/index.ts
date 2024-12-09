@@ -29,6 +29,12 @@ const SIMILARITY_SERVICE_URL = process.env.SIMILARITY_SERVICE_URL ||
     ? 'https://two02-similarity-service.onrender.com'
     : 'http://localhost:5000');
 
+console.log(`[${new Date().toISOString()}] Starting server with configuration:`, {
+  NODE_ENV: process.env.NODE_ENV,
+  SIMILARITY_SERVICE_URL,
+  FRONTEND_URLS
+});
+
 const io = new Server(server, {
   cors: {
     origin: FRONTEND_URLS,
