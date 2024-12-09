@@ -41,21 +41,30 @@ let similarityServiceReady = false;
 async function warmupSimilarityService() {
   try {
     console.log(`[${new Date().toISOString()}] Warming up similarity service at: ${SIMILARITY_SERVICE_URL}`);
-    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { timeout: 5000 });
+    
+    // First check health with a shorter timeout
+    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { 
+      timeout: 5000 
+    });
     console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
     
-    // Test the similarity service with a simple comparison
+    if (response.data.status !== 'healthy' || response.data.model_status !== 'loaded') {
+      console.log(`[${new Date().toISOString()}] Service not ready yet, status:`, response.data);
+      return false;
+    }
+    
+    // Test the similarity service with a longer timeout for the first request
     const testResponse = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
       word: "test",
       description: "test",
       model: "sbert"
-    }, { timeout: 5000 });
+    }, { 
+      timeout: 30000  // 30 second timeout for the first request
+    });
     console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
     
-    similarityServiceReady = true;
     return true;
   } catch (error) {
-    similarityServiceReady = false;
     if (axios.isAxiosError(error)) {
       console.error(`[${new Date().toISOString()}] Similarity service error:`, {
         message: error.message,
@@ -323,12 +332,8 @@ io.on('connection', (socket: SocketType) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
-    // Warm up similarity service before game starts
-    try {
-      await warmupSimilarityService();
-    } catch (error) {
-      console.error('Failed to warm up similarity service:', error);
-    }
+    // Start warming up the service but don't wait for it
+    warmupSimilarityService().catch(console.error);
 
     // Create array of exactly 15 images
     const images = ACTIVE_IMAGE_SET.slice(0, 15).map(url => ({
