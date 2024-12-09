@@ -1,11 +1,11 @@
 import express, { Request, Response, RequestHandler } from 'express';
 import { Server } from 'socket.io';
-import http from 'http';
+import { createServer } from 'http';
 import { nanoid } from 'nanoid';
 import cors from 'cors';
 import axios from 'axios';
 import { descriptionStore } from './imageDescriptions.js';
-import { ACTIVE_IMAGE_SET } from './imageSets.js';
+import { getGameImages, type ImageInfo } from './imageSets.js';
 import {
   GameState,
   GameImage,
@@ -17,10 +17,9 @@ import {
   CustomRequest,
   SimilarityApiResponse
 } from './types.js';
-import { getGameImages } from './imageSets';
 
 const app = express();
-const server = http.createServer(app);
+const server = createServer(app);
 const FRONTEND_URLS = [
   process.env.FRONTEND_URL || "http://localhost:5173",
   "https://202-frontend.vercel.app"
@@ -163,36 +162,40 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
     const roomId = nanoid(6);
     console.log(`[${new Date().toISOString()}] Generated room ID:`, roomId);
     
-    const room: GameState = {
+    const initialImages = getGameImages().map((imageInfo: ImageInfo) => ({
+      id: nanoid(),
+      url: imageInfo.url,
+      team: Math.random() < 0.5 ? 'green' as Team : 'purple' as Team,
+      tags: [],
+      selected: false,
+      matched: false,
+      matchedWord: '',
+      similarity: 0
+    }));
+
+    rooms.set(roomId, {
       id: roomId,
       roomId,
       players: [],
       phase: 'lobby',
-      images: ACTIVE_IMAGE_SET.map((imageInfo) => ({
-        id: nanoid(),
-        url: imageInfo.url,
-        team: Math.random() < 0.5 ? 'green' : 'purple',
-        tags: [],
-        selected: false,
-        matched: false,
-        matchedWord: '',
-        similarity: 0
-      })),
+      images: initialImages,
       currentTurn: 'green',
-      timeRemaining: 120,
+      timeRemaining: 60,
       winner: null,
       gameStats: {
         green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
         purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
       }
-    };
+    });
 
     // Set default descriptions for each image
-    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
-      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    initialImages.forEach((image: GameImage) => {
+      const imageInfo = getGameImages().find((info: ImageInfo) => info.url === image.url);
+      if (imageInfo?.defaultDescription) {
+        descriptionStore.setDefaultDescription(image.url, imageInfo.defaultDescription);
+      }
     });
-    
-    rooms.set(roomId, room);
+
     console.log(`[${new Date().toISOString()}] Room created successfully:`, roomId);
     res.json({ roomId });
   } catch (error) {
@@ -343,7 +346,7 @@ io.on('connection', (socket: SocketType) => {
     warmupSimilarityService().catch(console.error);
 
     // Get random selection of images from multiple sets
-    const gameImages = getGameImages().map(imageInfo => ({
+    const gameImages = getGameImages().map((imageInfo: ImageInfo) => ({
       id: nanoid(),
       url: imageInfo.url,
       team: 'unassigned' as Team | 'red',
@@ -371,8 +374,8 @@ io.on('connection', (socket: SocketType) => {
     gameImages[indices[14]].team = 'red';
 
     // Set default descriptions
-    gameImages.forEach((image) => {
-      const imageInfo = getGameImages().find(info => info.url === image.url);
+    gameImages.forEach((image: GameImage) => {
+      const imageInfo = getGameImages().find((info: ImageInfo) => info.url === image.url);
       if (imageInfo?.defaultDescription) {
         descriptionStore.setDefaultDescription(image.url, imageInfo.defaultDescription);
       }
@@ -514,24 +517,30 @@ io.on('connection', (socket: SocketType) => {
     room.timeRemaining = 120;
     room.currentTurn = 'green';
     room.winner = null;
-    room.images = ACTIVE_IMAGE_SET.map(imageInfo => ({
+
+    const newImages = getGameImages().map((imageInfo: ImageInfo) => ({
       id: nanoid(),
       url: imageInfo.url,
-      team: Math.random() < 0.5 ? 'green' : 'purple',
+      team: Math.random() < 0.5 ? 'green' as Team : 'purple' as Team,
       tags: [],
       selected: false,
       matched: false,
       matchedWord: '',
       similarity: 0
     }));
+
+    room.images = newImages;
     room.gameStats = {
       green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
       purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
     };
 
     // Re-set default descriptions
-    ACTIVE_IMAGE_SET.forEach((imageInfo) => {
-      descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+    newImages.forEach((image: GameImage) => {
+      const imageInfo = getGameImages().find((info: ImageInfo) => info.url === image.url);
+      if (imageInfo?.defaultDescription) {
+        descriptionStore.setDefaultDescription(image.url, imageInfo.defaultDescription);
+      }
     });
 
     io.to(roomId).emit('room-updated', room);

@@ -1,4 +1,4 @@
-interface ImageInfo {
+export interface ImageInfo {
   url: string;
   defaultDescription: string;
 }
