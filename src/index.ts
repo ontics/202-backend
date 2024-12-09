@@ -524,11 +524,14 @@ io.on('connection', (socket: SocketType) => {
 
     const unmatchedImages = room.images.filter(img => !img.matched);
     const comparisons = [];
+    const imageDescriptionCounts = new Map<string, number>();
 
+    // First pass: collect all comparisons and count descriptions per image
     for (const img of unmatchedImages) {
       const playerTags = img.tags.map(t => t.text);
       const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
       const allDescriptions = [...playerTags, ...storedDescriptions];
+      imageDescriptionCounts.set(img.id, allDescriptions.length);
 
       for (const desc of allDescriptions) {
         comparisons.push({
@@ -542,23 +545,31 @@ io.on('connection', (socket: SocketType) => {
       io.to(roomId).emit('guess-start');
 
       const similarities = await getSimilarityBatch(comparisons);
+      
+      // Track which similarities belong to which image
+      let currentIndex = 0;
       const imageMatches = unmatchedImages.map(img => {
         const playerTags = img.tags.map(t => t.text);
         const storedDescriptions = descriptionStore.getDescriptions(img.url, playerTags);
         const allDescriptions = [...playerTags, ...storedDescriptions];
-
+        
+        // Find the best similarity among this image's descriptions
         let maxSimilarity = 0;
         let bestDescription = '';
         let bestTag = null;
 
-        allDescriptions.forEach((desc, index) => {
-          const similarity = similarities[index].similarity;
+        // Look at similarities only for this image's descriptions
+        allDescriptions.forEach((desc, i) => {
+          const similarity = similarities[currentIndex + i].similarity;
           if (similarity > maxSimilarity) {
             maxSimilarity = similarity;
             bestDescription = desc;
             bestTag = img.tags.find(t => t.text === desc);
           }
         });
+
+        // Move index forward by number of descriptions for this image
+        currentIndex += allDescriptions.length;
 
         return {
           image: img,
@@ -567,6 +578,14 @@ io.on('connection', (socket: SocketType) => {
           matchedTag: bestTag
         };
       });
+
+      console.log(`[${new Date().toISOString()}] Image matches:`, 
+        imageMatches.map(m => ({
+          imageId: m.image.id,
+          similarity: m.similarity,
+          description: m.matchedDescription
+        }))
+      );
 
       const matches = imageMatches
         .sort((a, b) => b.similarity - a.similarity)
