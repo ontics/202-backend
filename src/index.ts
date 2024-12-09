@@ -35,6 +35,84 @@ console.log(`[${new Date().toISOString()}] Starting server with configuration:`,
   FRONTEND_URLS
 });
 
+// Initialize similarity service
+let similarityServiceReady = false;
+
+async function warmupSimilarityService() {
+  try {
+    console.log(`[${new Date().toISOString()}] Warming up similarity service at: ${SIMILARITY_SERVICE_URL}`);
+    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { timeout: 5000 });
+    console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
+    
+    // Test the similarity service with a simple comparison
+    const testResponse = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
+      word: "test",
+      description: "test",
+      model: "sbert"
+    }, { timeout: 5000 });
+    console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
+    
+    similarityServiceReady = true;
+    return true;
+  } catch (error) {
+    similarityServiceReady = false;
+    if (axios.isAxiosError(error)) {
+      console.error(`[${new Date().toISOString()}] Similarity service error:`, {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data,
+        url: error.config?.url,
+        timeout: error.code === 'ECONNABORTED'
+      });
+    } else {
+      console.error(`[${new Date().toISOString()}] Unknown error connecting to similarity service:`, error);
+    }
+    return false;
+  }
+}
+
+// Initial warmup
+warmupSimilarityService();
+
+// Periodic warmup every 5 minutes
+setInterval(warmupSimilarityService, 5 * 60 * 1000);
+
+async function getSimilarityBatch(comparisons: { word: string, description: string }[]) {
+  // If service isn't ready, try to warm it up first
+  if (!similarityServiceReady) {
+    await warmupSimilarityService();
+  }
+
+  try {
+    console.log(`[${new Date().toISOString()}] Calculating batch similarity for ${comparisons.length} pairs`);
+    const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare-batch`, comparisons, {
+      timeout: 30000
+    });
+    console.log(`[${new Date().toISOString()}] Batch similarity response:`, response.data);
+    similarityServiceReady = true;
+    return response.data;
+  } catch (error) {
+    similarityServiceReady = false;
+    if (axios.isAxiosError(error)) {
+      console.error(`[${new Date().toISOString()}] Batch similarity calculation error:`, {
+        message: error.message,
+        code: error.code,
+        response: error.response?.data,
+        url: error.config?.url
+      });
+      // Provide fallback similarities
+      return comparisons.map(({ word, description }) => {
+        const w = word.toLowerCase();
+        const d = description.toLowerCase();
+        if (w === d) return { similarity: 1.0, model: 'sbert' };
+        if (w.includes(d) || d.includes(w)) return { similarity: 0.8, model: 'sbert' };
+        return { similarity: 0.0, model: 'sbert' };
+      });
+    }
+    throw error;
+  }
+}
+
 const io = new Server(server, {
   cors: {
     origin: FRONTEND_URLS,
@@ -60,66 +138,6 @@ app.use((req: Request, res: Response, next) => {
 
 // In-memory store (replace with a database in production)
 const rooms = new Map<string, GameState>();
-
-async function warmupSimilarityService() {
-  try {
-    console.log(`[${new Date().toISOString()}] Warming up similarity service at: ${SIMILARITY_SERVICE_URL}`);
-    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { timeout: 5000 });
-    console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
-    
-    // Test the similarity service with a simple comparison
-    const testResponse = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
-      word: "test",
-      description: "test",
-      model: "sbert"
-    }, { timeout: 5000 });
-    console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
-    
-    return true;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(`[${new Date().toISOString()}] Similarity service error:`, {
-        message: error.message,
-        code: error.code,
-        response: error.response?.data,
-        url: error.config?.url,
-        timeout: error.code === 'ECONNABORTED'
-      });
-    } else {
-      console.error(`[${new Date().toISOString()}] Unknown error connecting to similarity service:`, error);
-    }
-    return false;
-  }
-}
-
-async function getSimilarityBatch(comparisons: { word: string, description: string }[]) {
-  try {
-    console.log(`[${new Date().toISOString()}] Calculating batch similarity for ${comparisons.length} pairs`);
-    const response = await axios.post(`${SIMILARITY_SERVICE_URL}/compare-batch`, comparisons, {
-      timeout: 30000
-    });
-    console.log(`[${new Date().toISOString()}] Batch similarity response:`, response.data);
-    return response.data;
-  } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(`[${new Date().toISOString()}] Batch similarity calculation error:`, {
-        message: error.message,
-        code: error.code,
-        response: error.response?.data,
-        url: error.config?.url
-      });
-      // Provide fallback similarities
-      return comparisons.map(({ word, description }) => {
-        const w = word.toLowerCase();
-        const d = description.toLowerCase();
-        if (w === d) return { similarity: 1.0, model: 'sbert' };
-        if (w.includes(d) || d.includes(w)) return { similarity: 0.8, model: 'sbert' };
-        return { similarity: 0.0, model: 'sbert' };
-      });
-    }
-    throw error;
-  }
-}
 
 app.get('/health', (_req: Request, res: Response) => {
   res.json({ status: 'ok' });
@@ -301,9 +319,16 @@ io.on('connection', (socket: SocketType) => {
     io.to(roomId).emit('room-updated', room);
   });
 
-  socket.on('start-game', (roomId: string) => {
+  socket.on('start-game', async (roomId: string) => {
     const room = rooms.get(roomId);
     if (!room) return;
+
+    // Warm up similarity service before game starts
+    try {
+      await warmupSimilarityService();
+    } catch (error) {
+      console.error('Failed to warm up similarity service:', error);
+    }
 
     // Create array of exactly 15 images
     const images = ACTIVE_IMAGE_SET.slice(0, 15).map(url => ({
