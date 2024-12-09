@@ -601,10 +601,10 @@ io.on('connection', (socket: SocketType) => {
     // First pass: collect all comparisons and count descriptions per image
     for (const img of unmatchedImages) {
       const playerTags = img.tags.map(t => t.text);
-      // Only get stored descriptions if there are no player tags
+      // If there are player tags, use those. Otherwise use default description
       const descriptions = playerTags.length > 0 
         ? playerTags 
-        : descriptionStore.getDescriptions(roomId, img.url);
+        : [descriptionStore.getDefaultDescription(img.url)].filter(Boolean) as string[];
       
       imageDescriptionCounts.set(img.id, descriptions.length);
 
