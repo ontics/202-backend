@@ -342,53 +342,87 @@ io.on('connection', (socket: SocketType) => {
     const room = rooms.get(roomId);
     if (!room) return;
 
-    // Start warming up the service but don't wait for it
-    warmupSimilarityService().catch(console.error);
+    try {
+      // Start warming up the service but don't wait for it
+      warmupSimilarityService().catch(console.error);
 
-    // Get random selection of images from multiple sets
-    const selectedImageInfos = getGameImages();
-    const gameImages = selectedImageInfos.map((imageInfo: ImageInfo) => ({
-      id: nanoid(),
-      url: imageInfo.url,
-      team: 'unassigned' as Team | 'red',
-      tags: [],
-      selected: false,
-      matched: false,
-      matchedWord: '',
-      similarity: 0
-    }));
-
-    // Create array of indices and shuffle
-    const indices = Array.from({ length: 15 }, (_, i) => i);
-    for (let i = indices.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [indices[i], indices[j]] = [indices[j], indices[i]];
-    }
-
-    // Assign teams
-    for (let i = 0; i < 7; i++) {
-      gameImages[indices[i]].team = 'green';
-    }
-    for (let i = 7; i < 14; i++) {
-      gameImages[indices[i]].team = 'purple';
-    }
-    gameImages[indices[14]].team = 'red';
-
-    // Set default descriptions using the original selected images
-    selectedImageInfos.forEach((imageInfo: ImageInfo) => {
-      if (imageInfo.defaultDescription) {
-        descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+      // Get random selection of images from multiple sets
+      const selectedImageInfos = getGameImages();
+      
+      // Safety check: ensure we have exactly 15 images
+      if (selectedImageInfos.length !== 15) {
+        console.error(`[${new Date().toISOString()}] Error: Got ${selectedImageInfos.length} images instead of 15`);
+        io.to(roomId).emit('game-error', 'Failed to initialize game images');
+        return;
       }
-    });
 
-    room.images = gameImages;
-    room.phase = 'playing';
-    room.timeRemaining = 120;
-    room.currentTurn = 'green';
-    room.winner = null;
+      const gameImages = selectedImageInfos.map((imageInfo: ImageInfo) => ({
+        id: nanoid(),
+        url: imageInfo.url,
+        team: 'unassigned' as Team | 'red',
+        tags: [],
+        selected: false,
+        matched: false,
+        matchedWord: '',
+        similarity: 0
+      }));
 
-    io.to(roomId).emit('game-started', roomId);
-    io.to(roomId).emit('room-updated', room);
+      // Create array of indices and shuffle
+      const indices = Array.from({ length: gameImages.length }, (_, i) => i);
+      for (let i = indices.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [indices[i], indices[j]] = [indices[j], indices[i]];
+      }
+
+      // Safety check: ensure indices array matches gameImages length
+      if (indices.length !== gameImages.length) {
+        console.error(`[${new Date().toISOString()}] Error: Indices length (${indices.length}) doesn't match gameImages length (${gameImages.length})`);
+        io.to(roomId).emit('game-error', 'Failed to initialize game setup');
+        return;
+      }
+
+      // Assign teams
+      for (let i = 0; i < 7 && i < indices.length; i++) {
+        if (gameImages[indices[i]]) {
+          gameImages[indices[i]].team = 'green';
+        }
+      }
+      for (let i = 7; i < 14 && i < indices.length; i++) {
+        if (gameImages[indices[i]]) {
+          gameImages[indices[i]].team = 'purple';
+        }
+      }
+      if (indices[14] !== undefined && gameImages[indices[14]]) {
+        gameImages[indices[14]].team = 'red';
+      }
+
+      // Set default descriptions using the original selected images
+      selectedImageInfos.forEach((imageInfo: ImageInfo) => {
+        if (imageInfo.defaultDescription) {
+          descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
+        }
+      });
+
+      // Final safety check: ensure all images have teams assigned
+      const unassignedImages = gameImages.filter(img => img.team === 'unassigned');
+      if (unassignedImages.length > 0) {
+        console.error(`[${new Date().toISOString()}] Error: ${unassignedImages.length} images remain unassigned`);
+        io.to(roomId).emit('game-error', 'Failed to assign teams to all images');
+        return;
+      }
+
+      room.images = gameImages;
+      room.phase = 'playing';
+      room.timeRemaining = 120;
+      room.currentTurn = 'green';
+      room.winner = null;
+
+      io.to(roomId).emit('game-started', roomId);
+      io.to(roomId).emit('room-updated', room);
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Error starting game:`, error);
+      io.to(roomId).emit('game-error', 'Failed to start game');
+    }
   });
 
   socket.on('submit-tag', ({ roomId, playerId, imageId, tag }: { 
