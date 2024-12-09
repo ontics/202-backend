@@ -64,7 +64,7 @@ const rooms = new Map<string, GameState>();
 async function warmupSimilarityService() {
   try {
     console.log(`[${new Date().toISOString()}] Warming up similarity service at: ${SIMILARITY_SERVICE_URL}`);
-    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`);
+    const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { timeout: 5000 });
     console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
     
     // Test the similarity service with a simple comparison
@@ -72,7 +72,7 @@ async function warmupSimilarityService() {
       word: "test",
       description: "test",
       model: "sbert"
-    });
+    }, { timeout: 5000 });
     console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
     
     return true;
@@ -82,7 +82,8 @@ async function warmupSimilarityService() {
         message: error.message,
         code: error.code,
         response: error.response?.data,
-        url: error.config?.url
+        url: error.config?.url,
+        timeout: error.code === 'ECONNABORTED'
       });
     } else {
       console.error(`[${new Date().toISOString()}] Unknown error connecting to similarity service:`, error);
@@ -129,9 +130,8 @@ app.get('/health', (_req: Request, res: Response) => {
 app.post('/api/rooms', async (_req: Request, res: Response) => {
   console.log(`[${new Date().toISOString()}] Attempting to create room`);
   try {
-    // Try to warm up similarity service and wait for the result
-    const isServiceReady = await warmupSimilarityService();
-    console.log(`[${new Date().toISOString()}] Similarity service ready status:`, isServiceReady);
+    // Try to warm up similarity service but don't wait for the result
+    warmupSimilarityService().catch(console.error);
     
     const roomId = nanoid(6);
     console.log(`[${new Date().toISOString()}] Generated room ID:`, roomId);
@@ -147,7 +147,9 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
         team: Math.random() < 0.5 ? 'green' : 'purple',
         tags: [],
         selected: false,
-        matched: false
+        matched: false,
+        matchedWord: '',
+        similarity: 0
       })),
       currentTurn: 'green',
       timeRemaining: 120,
@@ -160,7 +162,7 @@ app.post('/api/rooms', async (_req: Request, res: Response) => {
     
     rooms.set(roomId, room);
     console.log(`[${new Date().toISOString()}] Room created successfully:`, roomId);
-    res.json({ roomId, similarityServiceReady: isServiceReady });
+    res.json({ roomId });
   } catch (error) {
     console.error(`[${new Date().toISOString()}] Error creating room:`, error);
     res.status(500).json({ error: 'Failed to create room' });
