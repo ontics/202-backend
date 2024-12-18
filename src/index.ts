@@ -18,6 +18,16 @@ import {
   SimilarityApiResponse
 } from './types.js';
 
+// Helper function for shuffling arrays
+function shuffleArray<T>(array: T[]): T[] {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+}
+
 const app = express();
 const server = createServer(app);
 const FRONTEND_URLS = [
@@ -44,7 +54,7 @@ async function warmupSimilarityService() {
     
     // First check health with a shorter timeout
     const response = await axios.get(`${SIMILARITY_SERVICE_URL}/health`, { 
-      timeout: 10000
+      timeout: 5000  // Reduced timeout for local development
     });
     console.log(`[${new Date().toISOString()}] Similarity service health check response:`, response.data);
     
@@ -53,16 +63,17 @@ async function warmupSimilarityService() {
       return false;
     }
     
-    // Test the similarity service with a longer timeout for the first request
+    // Test the similarity service with a shorter timeout for local development
     const testResponse = await axios.post(`${SIMILARITY_SERVICE_URL}/compare`, {
       word: "test",
       description: "test",
       model: "sbert"
     }, { 
-      timeout: 30000  // 30 second timeout for the first request
+      timeout: 10000  // Reduced timeout for local development
     });
     console.log(`[${new Date().toISOString()}] Similarity service test comparison response:`, testResponse.data);
     
+    similarityServiceReady = true;
     return true;
   } catch (error) {
     if (axios.isAxiosError(error)) {
@@ -76,6 +87,7 @@ async function warmupSimilarityService() {
     } else {
       console.error(`[${new Date().toISOString()}] Unknown error connecting to similarity service:`, error);
     }
+    similarityServiceReady = false;
     return false;
   }
 }
@@ -83,8 +95,9 @@ async function warmupSimilarityService() {
 // Initial warmup
 warmupSimilarityService();
 
-// Periodic warmup every 10 minutes
-setInterval(warmupSimilarityService, 10 * 60 * 1000);
+// Periodic warmup every 30 seconds for local development, 10 minutes for production
+const warmupInterval = process.env.NODE_ENV === 'production' ? 10 * 60 * 1000 : 30 * 1000;
+setInterval(warmupSimilarityService, warmupInterval);
 
 async function getSimilarityBatch(comparisons: { word: string, description: string }[]) {
   // If service isn't ready, try to warm it up first
@@ -142,8 +155,25 @@ app.use((req: Request, res: Response, next) => {
 // In-memory store (replace with a database in production)
 const rooms = new Map<string, GameState>();
 
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ status: 'ok' });
+app.get('/health', async (_req: Request, res: Response) => {
+  try {
+    // Check if similarity service is ready
+    if (!similarityServiceReady) {
+      await warmupSimilarityService();
+    }
+    
+    res.json({ 
+      status: similarityServiceReady ? 'ok' : 'initializing',
+      similarity_service: similarityServiceReady ? 'ready' : 'not_ready'
+    });
+  } catch (error) {
+    console.error('Health check failed:', error);
+    res.json({ 
+      status: 'error',
+      similarity_service: 'error',
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
 });
 
 // Create room endpoint
@@ -296,13 +326,25 @@ io.on('connection', (socket: SocketType) => {
       if (room.players.length === 0) {
         player.isRoomAdmin = true;
       }
+
+      // Check if this is the first player of their team
+      const teamPlayers = room.players.filter(p => p.team === player.team);
+      if (teamPlayers.length === 0) {
+        // If first player of team, make them codebreaker
+        player.role = 'codebreaker';
+      } else {
+        // Otherwise, they're a tagger by default
+        player.role = 'tagger';
+      }
+
       room.players.push(player);
     } else {
-      // Update existing player data
+      // Update existing player data but preserve role and admin status
       room.players[existingPlayerIndex] = {
         ...room.players[existingPlayerIndex],
         ...player,
-        isRoomAdmin: room.players[existingPlayerIndex].isRoomAdmin // Preserve admin status
+        role: room.players[existingPlayerIndex].role,
+        isRoomAdmin: room.players[existingPlayerIndex].isRoomAdmin
       };
     }
     
@@ -346,10 +388,11 @@ io.on('connection', (socket: SocketType) => {
       // Safety check: ensure we have exactly 15 images
       if (selectedImageInfos.length !== 15) {
         console.error(`[${new Date().toISOString()}] Error: Got ${selectedImageInfos.length} images instead of 15`);
-        io.to(roomId).emit('game-error', 'Failed to initialize game images');
+        io.to(roomId).emit('game-error', 'Unable to initialize game images. Please try again.');
         return;
       }
 
+      // Initialize game images with IDs first
       const gameImages = selectedImageInfos.map((imageInfo: ImageInfo) => ({
         id: nanoid(),
         url: imageInfo.url,
@@ -361,36 +404,23 @@ io.on('connection', (socket: SocketType) => {
         similarity: 0
       }));
 
-      // Create array of indices and shuffle
-      const indices = Array.from({ length: gameImages.length }, (_, i) => i);
-      for (let i = indices.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
-        [indices[i], indices[j]] = [indices[j], indices[i]];
-      }
+      // Create a copy of the array for shuffling
+      const shuffledImages = shuffleArray([...gameImages]);
 
-      // Safety check: ensure indices array matches gameImages length
-      if (indices.length !== gameImages.length) {
-        console.error(`[${new Date().toISOString()}] Error: Indices length (${indices.length}) doesn't match gameImages length (${gameImages.length})`);
-        io.to(roomId).emit('game-error', 'Failed to initialize game setup');
-        return;
-      }
+      // Create an array of team assignments and shuffle it
+      const teamAssignments = [
+        ...Array(7).fill('green' as Team),
+        ...Array(7).fill('purple' as Team),
+        'red' as Team
+      ];
+      const shuffledTeams = shuffleArray(teamAssignments);
 
-      // Assign teams
-      for (let i = 0; i < 7 && i < indices.length; i++) {
-        if (gameImages[indices[i]]) {
-          gameImages[indices[i]].team = 'green';
-        }
-      }
-      for (let i = 7; i < 14 && i < indices.length; i++) {
-        if (gameImages[indices[i]]) {
-          gameImages[indices[i]].team = 'purple';
-        }
-      }
-      if (indices[14] !== undefined && gameImages[indices[14]]) {
-        gameImages[indices[14]].team = 'red';
-      }
+      // Assign shuffled teams to images
+      shuffledImages.forEach((image, index) => {
+        image.team = shuffledTeams[index];
+      });
 
-      // Set default descriptions using the original selected images
+      // Set default descriptions
       selectedImageInfos.forEach((imageInfo: ImageInfo) => {
         if (imageInfo.defaultDescription) {
           descriptionStore.setDefaultDescription(imageInfo.url, imageInfo.defaultDescription);
@@ -398,24 +428,37 @@ io.on('connection', (socket: SocketType) => {
       });
 
       // Final safety check: ensure all images have teams assigned
-      const unassignedImages = gameImages.filter(img => !['red', 'green', 'purple'].includes(img.team as string));
+      const unassignedImages = shuffledImages.filter(img => !['red', 'green', 'purple'].includes(img.team as string));
       if (unassignedImages.length > 0) {
         console.error(`[${new Date().toISOString()}] Error: ${unassignedImages.length} images remain unassigned`);
-        io.to(roomId).emit('game-error', 'Failed to assign teams to all images');
+        io.to(roomId).emit('game-error', 'Error assigning teams to images. Please try again.');
         return;
       }
 
-      room.images = gameImages;
+      // Update room state
+      room.images = shuffledImages;
       room.phase = 'playing';
       room.timeRemaining = 120;
       room.currentTurn = 'green';
       room.winner = null;
+      room.gameStats = {
+        green: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 },
+        purple: { correctGuesses: 0, incorrectGuesses: 0, totalSimilarity: 0 }
+      };
 
+      // Notify clients
       io.to(roomId).emit('game-started', roomId);
       io.to(roomId).emit('room-updated', room);
     } catch (error) {
       console.error(`[${new Date().toISOString()}] Error starting game:`, error);
-      io.to(roomId).emit('game-error', 'Failed to start game');
+      
+      // Reset room state on error
+      room.phase = 'lobby';
+      room.timeRemaining = 120;
+      room.images = [];
+      
+      io.to(roomId).emit('game-error', 'Failed to start game. Please try again.');
+      io.to(roomId).emit('room-updated', room);
     }
   });
 
@@ -620,7 +663,10 @@ io.on('connection', (socket: SocketType) => {
     if (!room) return;
 
     const currentPlayer = room.players.find(p => p.id === playerId);
-    if (!currentPlayer || currentPlayer.team !== room.currentTurn) return;
+    // Check if player is the codebreaker for their team
+    if (!currentPlayer || 
+        currentPlayer.team !== room.currentTurn || 
+        currentPlayer.role !== 'codebreaker') return;
 
     const unmatchedImages = room.images.filter(img => !img.matched);
     const comparisons = [];
@@ -647,6 +693,7 @@ io.on('connection', (socket: SocketType) => {
     try {
       io.to(roomId).emit('guess-start');
 
+      // Calculate similarities
       const similarities = await getSimilarityBatch(comparisons);
       
       // Track which similarities belong to which image
@@ -696,6 +743,17 @@ io.on('connection', (socket: SocketType) => {
       const matches = imageMatches
         .sort((a, b) => b.similarity - a.similarity)
         .slice(0, count);
+
+      // Enforce minimum buffering time (2 cycles of the animation)
+      const BUFFER_CYCLE_TIME = 3000; // 3 seconds per cycle
+      const MIN_CYCLES = 2;
+      const timeSinceStart = Date.now();
+      const minBufferTime = MIN_CYCLES * BUFFER_CYCLE_TIME;
+      const remainingBuffer = minBufferTime - (Date.now() - timeSinceStart);
+      
+      if (remainingBuffer > 0) {
+        await new Promise(resolve => setTimeout(resolve, remainingBuffer));
+      }
 
       // Signal that we're about to start revealing matches
       io.to(roomId).emit('match-reveal');
@@ -794,7 +852,7 @@ io.on('connection', (socket: SocketType) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3001;
 
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);

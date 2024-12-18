@@ -33,6 +33,40 @@ export const IMAGE_SETS = {
     ...info,
     url: processImageUrl(info.url)
   })),
+
+  transport: [
+    {
+      url: 'https://images.unsplash.com/photo-1687973692549-cdabe636547f',
+      defaultDescription: 'cowboy on horseback in the sandy desert plains'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1518123417771-4a83068af6e3',
+      defaultDescription: 'a man landing his skateboard off a handrail beside a concrete staircase'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1559845865-5c82500c0f5a',
+      defaultDescription: 'the london eye ferris wheel under a dark cloudy sky'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1493673155827-a7617e74a0ca',
+      defaultDescription: 'two pilots in a small airplane cockpit flying over a city visible through the windshield'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1652090379496-4219a00c8ebf',
+      defaultDescription: 'an italian formula 1 racecar on the track'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1527431293370-0cd188ca5d15',
+      defaultDescription: 'a sailboat moored in the marina at sunset, tethered to a buoy'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1442570468985-f63ed5de9086',
+      defaultDescription: 'a train traveling along a curved railway bridge through a lush forest, with a smiling person leaning out the door'
+    }
+  ].map(info => ({
+    ...info,
+    url: processImageUrl(info.url)
+  })),
   
   urban: [
     {
@@ -50,6 +84,10 @@ export const IMAGE_SETS = {
     {
       url: 'https://images.unsplash.com/photo-1465447142348-e9952c393450',
       defaultDescription: 'complex highway interchange amidst city buildings and parks'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1599689444589-133726281155',
+      defaultDescription: 'a pedestrian crossing in London with a wait signal'
     }
   ].map(info => ({
     ...info,
@@ -78,8 +116,8 @@ export const IMAGE_SETS = {
       defaultDescription: 'inside the roman colosseum'
     },
     {
-      url: 'https://images.unsplash.com/photo-1707621724113-2d05615e50ef',
-      defaultDescription: 'christ the redeemer statue in rio'
+      url: 'https://images.unsplash.com/photo-1539053447282-6f32f2bddfed',
+      defaultDescription: 'taking a picture of christ the redeemer statue in Rio de Janeiro'
     },
     {
       url: 'https://plus.unsplash.com/premium_photo-1664304492320-8359efcaad38',
@@ -97,6 +135,21 @@ export const IMAGE_SETS = {
     ...info,
     url: processImageUrl(info.url)
   })),
+
+  misc2: [
+    {
+      url: 'https://images.unsplash.com/photo-1545672968-3ef43aceabe3',
+      defaultDescription: 'a hand holding a single ticket into the Philadelphia Zoo'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1485313260896-6e6edf486858',
+      defaultDescription: 'a quarterback practicing a pass in a football field'
+    },
+    {
+      url: 'https://images.unsplash.com/photo-1545262841-5283004cef19', // Backup: https://images.unsplash.com/photo-1631961890892-d8d24f0b6e04
+      defaultDescription: 'a hand with a wristwatch pushing a lit screen with its index finger'
+    }
+  ],
 
   miscellaneous: [
     {
@@ -151,29 +204,45 @@ function shuffleArray<T>(array: T[]): T[] {
 }
 
 export function getRandomImageSet(): ImageInfo[] {
-  // Get all available sets
+  // Get all available sets that have enough images
   const setNames = Object.keys(IMAGE_SETS) as (keyof typeof IMAGE_SETS)[];
+  const validSets = setNames.filter(setName => IMAGE_SETS[setName].length >= 5);
   
-  // Randomly select between 3 and 5 sets
-  const numSets = getRandomInt(3, 5);
-  const selectedSets = shuffleArray(setNames).slice(0, numSets);
-  
-  // Calculate how many images to take from each set
-  const totalImages = 15;
-  const imagesPerSet = Math.floor(totalImages / numSets);
-  const remainder = totalImages % numSets;
-  
-  let selectedImages: ImageInfo[] = [];
-  
-  selectedSets.forEach((setName, index) => {
-    const set = IMAGE_SETS[setName];
-    // Add extra image from remainder if needed
-    const numImages = imagesPerSet + (index < remainder ? 1 : 0);
-    const shuffledSet = shuffleArray(set);
-    selectedImages = selectedImages.concat(shuffledSet.slice(0, numImages));
-  });
-  
-  return shuffleArray(selectedImages);
+  if (validSets.length < 5) {
+    console.error('Not enough valid image sets available');
+    throw new Error('Not enough valid image sets available');
+  }
+
+  // Randomly choose between two strategies:
+  // 1. 5 sets of 3 images each
+  // 2. 3 sets of 5 images each
+  const useFiveSets = Math.random() < 0.5;
+
+  if (useFiveSets) {
+    // Strategy 1: 5 sets of 3 images each
+    const selectedSets = shuffleArray(validSets).slice(0, 5);
+    let selectedImages: ImageInfo[] = [];
+
+    selectedSets.forEach(setName => {
+      const set = IMAGE_SETS[setName];
+      const shuffledSet = shuffleArray(set);
+      selectedImages = selectedImages.concat(shuffledSet.slice(0, 3));
+    });
+
+    return shuffleArray(selectedImages);
+  } else {
+    // Strategy 2: 3 sets of 5 images each
+    const selectedSets = shuffleArray(validSets).slice(0, 3);
+    let selectedImages: ImageInfo[] = [];
+
+    selectedSets.forEach(setName => {
+      const set = IMAGE_SETS[setName];
+      const shuffledSet = shuffleArray(set);
+      selectedImages = selectedImages.concat(shuffledSet.slice(0, 5));
+    });
+
+    return shuffleArray(selectedImages);
+  }
 }
 
 // Use this instead of ACTIVE_IMAGE_SET
